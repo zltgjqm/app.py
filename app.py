@@ -1,7 +1,7 @@
 # app.py
 import os
 import datetime as dt
-from typing import Optional, Tuple, Dict, Any, List
+from typing import Optional, Tuple, Dict, Any
 
 import requests
 import pandas as pd
@@ -12,6 +12,27 @@ import streamlit as st
 # Page Config
 # =========================
 st.set_page_config(page_title="AI 습관 트래커", page_icon="📊", layout="wide")
+
+
+# =========================
+# Constants
+# =========================
+CITIES = [
+    "Seoul", "Busan", "Incheon", "Daegu", "Daejeon",
+    "Gwangju", "Suwon", "Ulsan", "Jeju", "Sejong"
+]
+
+COACH_STYLES = ["스파르타 코치", "따뜻한 멘토", "게임 마스터"]
+
+BASE_HABITS = [
+    "☀️ 기상 미션",
+    "💧 물 마시기",
+    "📚 공부/독서",
+    "🏃 운동하기",
+    "😴 수면",
+]
+
+WEEKDAYS_KR = ["월", "화", "수", "목", "금", "토", "일"]
 
 
 # =========================
@@ -28,7 +49,7 @@ def get_weather(city: str, api_key: str) -> Optional[Dict[str, Any]]:
     try:
         url = "https://api.openweathermap.org/data/2.5/weather"
         params = {
-            "q": f"{city},KR",  # ⭐ 한국 도시 확실하게
+            "q": f"{city},KR",
             "appid": api_key,
             "units": "metric",
             "lang": "kr",
@@ -82,7 +103,7 @@ def get_dog_image() -> Optional[Tuple[str, str]]:
             parts = img_url.split("/breeds/")
             if len(parts) > 1:
                 tail = parts[1]
-                breed_part = tail.split("/")[0]  # e.g., hound-afghan
+                breed_part = tail.split("/")[0]
                 breed = breed_part.replace("-", " ").title()
         except Exception:
             pass
@@ -124,7 +145,6 @@ def _call_openai_report(api_key: str, model: str, system_prompt: str, user_promp
             if txt:
                 return txt.strip()
 
-            # output 배열 조립 (버전 대비)
             out = data.get("output")
             if isinstance(out, list):
                 chunks = []
@@ -169,15 +189,18 @@ def _call_openai_report(api_key: str, model: str, system_prompt: str, user_promp
 
 
 def generate_report(
-    habits: Dict[str, bool],
+    habits: dict,
     mood: int,
     coach_style: str,
     weather: Optional[Dict[str, Any]],
     dog: Optional[Tuple[str, str]],
     openai_api_key: str,
+    selected_date: str,
+    weekday_tasks: list,
+    weekday_done: list,
 ) -> str:
     """
-    습관+기분+날씨+강아지 품종을 모아서 OpenAI에 전달
+    습관+기분+날씨+강아지+요일별 체크리스트까지 포함하여 OpenAI에 전달
     모델: gpt-5-mini
     """
 
@@ -210,6 +233,11 @@ def generate_report(
 
     dog_breed = dog[1] if dog else "알 수 없음"
 
+    # 요일 체크리스트 정리
+    weekday_total = len(weekday_tasks)
+    weekday_done_cnt = len(weekday_done)
+    weekday_rate = round((weekday_done_cnt / max(weekday_total, 1)) * 100) if weekday_total > 0 else 0
+
     system_prompt = (
         f"{style_prompts.get(coach_style, style_prompts['따뜻한 멘토'])}\n\n"
         "출력은 반드시 한국어로 작성하라.\n"
@@ -217,6 +245,8 @@ def generate_report(
         "형식:\n"
         "컨디션 등급: <S|A|B|C|D>\n"
         "습관 분석:\n"
+        "- ...\n"
+        "요일 퀘스트 분석:\n"
         "- ...\n"
         "날씨 코멘트:\n"
         "- ...\n"
@@ -230,15 +260,19 @@ def generate_report(
 
     user_prompt = (
         "아래 데이터를 기반으로 AI 습관 트래커 리포트를 작성해줘.\n\n"
-        f"- 오늘 달성률: {rate}%\n"
+        f"- 기록 날짜: {selected_date}\n"
+        f"- 오늘 달성률(기본 습관): {rate}%\n"
         f"- 달성한 습관: {', '.join(checked) if checked else '없음'}\n"
         f"- 놓친 습관: {', '.join(missed) if missed else '없음'}\n"
         f"- 기분(1~10): {mood}\n"
+        f"- 요일별 퀘스트 총 {weekday_total}개 중 {weekday_done_cnt}개 완료 ({weekday_rate}%)\n"
+        f"- 완료한 요일 퀘스트: {', '.join(weekday_done) if weekday_done else '없음'}\n"
         f"- 날씨: {w_txt}\n"
         f"- 오늘의 강아지 품종: {dog_breed}\n\n"
         "요구사항:\n"
         "- 컨디션 등급은 데이터에 근거해 현실적으로 부여해라.\n"
         "- 내일 미션은 실행 가능하고 구체적으로 3개.\n"
+        "- 요일 퀘스트 달성 여부를 반드시 분석해라.\n"
     )
 
     model = "gpt-5-mini"
@@ -247,14 +281,14 @@ def generate_report(
     if out:
         return out
 
-    # 폴백(키 없거나 호출 실패 시)
     return (
         "컨디션 등급: C\n"
         "습관 분석:\n"
-        f"- 달성률은 {rate}% 입니다. (달성: {len(checked)}개)\n"
-        "- 오늘은 최소 1~2개 습관을 확실히 유지하는 전략이 좋아요.\n"
+        f"- 기본 습관 달성률은 {rate}% 입니다.\n"
+        "요일 퀘스트 분석:\n"
+        f"- 요일 퀘스트 달성률은 {weekday_rate}% 입니다.\n"
         "날씨 코멘트:\n"
-        "- 날씨 정보를 가져오지 못했어요. (API Key/네트워크 확인)\n"
+        "- 날씨 정보를 가져오지 못했어요.\n"
         "내일 미션:\n"
         "1) 물 1컵 + 5분 스트레칭\n"
         "2) 20분 집중(공부/독서)\n"
@@ -265,16 +299,30 @@ def generate_report(
 
 
 # =========================
+# Utility
+# =========================
+def date_to_weekday_kr(d: dt.date) -> str:
+    return WEEKDAYS_KR[d.weekday()]
+
+
+def get_record(history: list, date_str: str) -> Optional[dict]:
+    for row in history:
+        if row.get("date") == date_str:
+            return row
+    return None
+
+
+def upsert_record(history: list, record: dict):
+    target = get_record(history, record["date"])
+    if target:
+        target.update(record)
+    else:
+        history.append(record)
+
+
+# =========================
 # Session State Init
 # =========================
-HABITS = {
-    "☀️ 기상 미션": False,
-    "💧 물 마시기": False,
-    "📚 공부/독서": False,
-    "🏃 운동하기": False,
-    "😴 수면": False,
-}
-
 if "history" not in st.session_state:
     today = dt.date.today()
     sample = []
@@ -286,7 +334,6 @@ if "history" not in st.session_state:
         (4, 6),
         (3, 7),
     ]
-
     for i in range(6, 0, -1):
         d = today - dt.timedelta(days=i)
         checked_cnt, mood_val = pattern[(6 - i) % len(pattern)]
@@ -296,10 +343,25 @@ if "history" not in st.session_state:
                 "achievement": round(checked_cnt / 5 * 100),
                 "checked": checked_cnt,
                 "mood": mood_val,
+                "city": "Seoul",
+                "coach_style": "따뜻한 멘토",
+                "habits": {},
+                "weekday_done": [],
             }
         )
-
     st.session_state.history = sample
+
+if "weekday_task_plan" not in st.session_state:
+    # 요일별 기본 체크리스트 템플릿
+    st.session_state.weekday_task_plan = {
+        "월": ["🧹 방 정리 10분", "📩 이메일 정리"],
+        "화": ["🧠 복습 20분", "🚶 15분 산책"],
+        "수": ["📚 책 10페이지", "🧘 스트레칭 10분"],
+        "목": ["💻 사이드 프로젝트 30분", "💧 물 2L 목표"],
+        "금": ["📝 주간 회고", "📦 다음 주 계획"],
+        "토": ["🏃 운동 강하게!", "🎮 휴식도 퀘스트"],
+        "일": ["😴 수면 리셋", "🍽 건강한 식사"],
+    }
 
 if "last_report" not in st.session_state:
     st.session_state.last_report = None
@@ -310,73 +372,123 @@ if "last_weather" not in st.session_state:
 if "last_dog" not in st.session_state:
     st.session_state.last_dog = None
 
+if "last_selected_date" not in st.session_state:
+    st.session_state.last_selected_date = dt.date.today()
+
 
 # =========================
-# Sidebar: API Keys
+# Sidebar
 # =========================
 with st.sidebar:
     st.header("🔑 API 설정")
     openai_api_key = st.text_input("OpenAI API Key", type="password", value=os.getenv("OPENAI_API_KEY", ""))
-    weather_api_key = st.text_input(
-        "OpenWeatherMap API Key", type="password", value=os.getenv("OPENWEATHERMAP_API_KEY", "")
-    )
+    weather_api_key = st.text_input("OpenWeatherMap API Key", type="password", value=os.getenv("OPENWEATHERMAP_API_KEY", ""))
 
     st.divider()
     debug_mode = st.checkbox("🛠 디버그 모드", value=False)
-    st.caption("디버그 모드에서는 API 응답 상태를 화면에 출력합니다.")
+
+    st.divider()
+    st.subheader("🗓 요일별 체크리스트 설정")
+    st.caption("요일별로 매일 해야 할 일을 저장해두고 자동 불러올 수 있어요.")
+
+    selected_weekday_for_plan = st.selectbox("요일 선택", WEEKDAYS_KR)
+
+    plan_text = st.text_area(
+        f"{selected_weekday_for_plan}요일 할 일 목록 (한 줄에 하나)",
+        value="\n".join(st.session_state.weekday_task_plan.get(selected_weekday_for_plan, [])),
+        height=150,
+    )
+
+    if st.button("📌 요일 체크리스트 저장", use_container_width=True):
+        lines = [x.strip() for x in plan_text.split("\n") if x.strip()]
+        st.session_state.weekday_task_plan[selected_weekday_for_plan] = lines
+        st.success(f"{selected_weekday_for_plan}요일 체크리스트 저장 완료!")
 
 
 # =========================
 # Main UI
 # =========================
 st.title("📊 AI 습관 트래커")
-st.caption("오늘 체크인 → 달성률/기분 → 날씨/강아지 → AI 코치 리포트까지!")
+st.caption("오늘/어제/원하는 날짜까지 기록하고, 요일별 퀘스트도 관리하는 업그레이드 버전 😈")
+
+
+# =========================
+# Calendar / Date Selection
+# =========================
+st.subheader("📅 기록할 날짜 선택 (달력 기능)")
+selected_date = st.date_input(
+    "날짜를 선택하세요 (어제 기록도 가능)",
+    value=st.session_state.last_selected_date,
+    max_value=dt.date.today(),
+)
+
+st.session_state.last_selected_date = selected_date
+selected_date_str = selected_date.isoformat()
+selected_weekday = date_to_weekday_kr(selected_date)
+
+existing = get_record(st.session_state.history, selected_date_str)
+
+st.info(f"선택한 날짜: **{selected_date_str} ({selected_weekday}요일)**")
+
+if existing:
+    st.success("이 날짜의 기록이 이미 있습니다. 수정/업데이트할 수 있어요.")
+else:
+    st.warning("이 날짜의 기록이 없습니다. 지금 작성하면 저장됩니다.")
 
 
 # =========================
 # Habit Check-in UI
 # =========================
-st.subheader("✅ 오늘 습관 체크인")
+st.subheader("✅ 습관 체크인")
 
 colA, colB = st.columns([1.3, 1.0], gap="large")
+
+# 기존 데이터 불러오기
+default_city = existing.get("city", "Seoul") if existing else "Seoul"
+default_style = existing.get("coach_style", "따뜻한 멘토") if existing else "따뜻한 멘토"
+default_mood = existing.get("mood", 7) if existing else 7
+default_habits = existing.get("habits", {}) if existing else {}
 
 with colA:
     c1, c2 = st.columns(2, gap="medium")
 
     habit_state = {}
-    habit_keys = list(HABITS.keys())
-
     with c1:
-        habit_state[habit_keys[0]] = st.checkbox(habit_keys[0], value=False)
-        habit_state[habit_keys[1]] = st.checkbox(habit_keys[1], value=False)
-        habit_state[habit_keys[2]] = st.checkbox(habit_keys[2], value=False)
+        habit_state[BASE_HABITS[0]] = st.checkbox(BASE_HABITS[0], value=default_habits.get(BASE_HABITS[0], False))
+        habit_state[BASE_HABITS[1]] = st.checkbox(BASE_HABITS[1], value=default_habits.get(BASE_HABITS[1], False))
+        habit_state[BASE_HABITS[2]] = st.checkbox(BASE_HABITS[2], value=default_habits.get(BASE_HABITS[2], False))
 
     with c2:
-        habit_state[habit_keys[3]] = st.checkbox(habit_keys[3], value=False)
-        habit_state[habit_keys[4]] = st.checkbox(habit_keys[4], value=False)
+        habit_state[BASE_HABITS[3]] = st.checkbox(BASE_HABITS[3], value=default_habits.get(BASE_HABITS[3], False))
+        habit_state[BASE_HABITS[4]] = st.checkbox(BASE_HABITS[4], value=default_habits.get(BASE_HABITS[4], False))
 
-    mood = st.slider("🙂 기분 슬라이더 (1~10)", min_value=1, max_value=10, value=7, step=1)
+    mood = st.slider("🙂 기분 슬라이더 (1~10)", min_value=1, max_value=10, value=int(default_mood), step=1)
 
 with colB:
-    cities = [
-        "Seoul",
-        "Busan",
-        "Incheon",
-        "Daegu",
-        "Daejeon",
-        "Gwangju",
-        "Suwon",
-        "Ulsan",
-        "Jeju",
-        "Sejong",
-    ]
-    city = st.selectbox("🌍 도시 선택", options=cities, index=0)
+    city = st.selectbox("🌍 도시 선택", options=CITIES, index=CITIES.index(default_city) if default_city in CITIES else 0)
+    coach_style = st.radio("🧠 코치 스타일", options=COACH_STYLES, index=COACH_STYLES.index(default_style))
 
-    coach_style = st.radio(
-        "🧠 코치 스타일",
-        options=["스파르타 코치", "따뜻한 멘토", "게임 마스터"],
-        index=1,
-    )
+
+# =========================
+# Weekday Checklist
+# =========================
+st.subheader("🗓 요일별 체크리스트 (매일 해야 하는 일)")
+
+weekday_tasks = st.session_state.weekday_task_plan.get(selected_weekday, [])
+existing_weekday_done = existing.get("weekday_done", []) if existing else []
+
+if not weekday_tasks:
+    st.info("이 요일에 설정된 체크리스트가 없어요. 사이드바에서 추가할 수 있습니다.")
+
+weekday_done = []
+for task in weekday_tasks:
+    done = st.checkbox(f"{task}", value=(task in existing_weekday_done))
+    if done:
+        weekday_done.append(task)
+
+weekday_done_cnt = len(weekday_done)
+weekday_total = len(weekday_tasks)
+weekday_rate = round((weekday_done_cnt / max(weekday_total, 1)) * 100) if weekday_total > 0 else 0
 
 
 # =========================
@@ -387,19 +499,18 @@ st.subheader("📈 달성률 + 차트")
 checked_cnt_now = sum(bool(v) for v in habit_state.values())
 achievement_now = round((checked_cnt_now / 5) * 100)
 
-m1, m2, m3 = st.columns(3, gap="medium")
+m1, m2, m3, m4 = st.columns(4, gap="medium")
 m1.metric("달성률", f"{achievement_now}%")
 m2.metric("달성 습관", f"{checked_cnt_now}/5")
 m3.metric("기분", f"{mood}/10")
+m4.metric("요일 퀘스트", f"{weekday_done_cnt}/{weekday_total}")
 
-# 7일 데이터 만들기 (샘플 6일 + 오늘)
-today_str = dt.date.today().isoformat()
+# 최근 7일 차트 (선택한 날짜 기준)
 hist_map = {r["date"]: r for r in st.session_state.history if "date" in r}
 
 seven_days = []
 for i in range(6, -1, -1):
-    d = (dt.date.today() - dt.timedelta(days=i)).isoformat()
-
+    d = (selected_date - dt.timedelta(days=i)).isoformat()
     if d in hist_map:
         row = hist_map[d]
         seven_days.append(
@@ -410,7 +521,8 @@ for i in range(6, -1, -1):
             }
         )
     else:
-        if d == today_str:
+        # 선택한 날짜면 입력값으로 임시 반영
+        if d == selected_date_str:
             seven_days.append({"date": d, "achievement": achievement_now, "mood": mood})
         else:
             seven_days.append({"date": d, "achievement": 0, "mood": 0})
@@ -419,12 +531,72 @@ df = pd.DataFrame(seven_days)
 df["date"] = pd.to_datetime(df["date"]).dt.strftime("%m/%d")
 
 chart_col, table_col = st.columns([1.6, 1.0], gap="large")
-
 with chart_col:
     st.bar_chart(df.set_index("date")[["achievement"]], height=280)
 
 with table_col:
     st.dataframe(df, use_container_width=True, height=280)
+
+
+# =========================
+# Extra Feature 1: Streak
+# =========================
+st.subheader("🔥 추가 기능: 연속 기록 스트릭 (Streak)")
+
+sorted_hist = sorted(st.session_state.history, key=lambda x: x["date"])
+date_set = set([x["date"] for x in sorted_hist])
+
+# streak 계산 (오늘부터 역순으로)
+streak = 0
+cursor = dt.date.today()
+while cursor.isoformat() in date_set:
+    streak += 1
+    cursor = cursor - dt.timedelta(days=1)
+
+st.metric("연속 기록 스트릭", f"{streak}일", help="오늘 포함, 연속으로 기록이 존재하는 날짜 수")
+
+
+# =========================
+# Extra Feature 2: Weekly Summary
+# =========================
+st.subheader("📌 추가 기능: 주간 요약 (선택 날짜 기준)")
+
+week_start = selected_date - dt.timedelta(days=selected_date.weekday())  # 월요일 시작
+week_dates = [(week_start + dt.timedelta(days=i)).isoformat() for i in range(7)]
+
+week_rows = []
+for d in week_dates:
+    row = hist_map.get(d)
+    if row:
+        week_rows.append(row)
+
+if week_rows:
+    avg_ach = round(sum(r.get("achievement", 0) for r in week_rows) / len(week_rows))
+    avg_mood = round(sum(r.get("mood", 0) for r in week_rows) / len(week_rows), 1)
+    st.write(f"📅 주간 평균 달성률: **{avg_ach}%**")
+    st.write(f"🙂 주간 평균 기분: **{avg_mood}/10**")
+else:
+    st.info("이번 주 기록이 아직 없어요.")
+
+
+# =========================
+# Save Button
+# =========================
+st.subheader("💾 기록 저장")
+
+if st.button("💾 선택한 날짜 기록 저장", use_container_width=True):
+    record = {
+        "date": selected_date_str,
+        "achievement": achievement_now,
+        "checked": checked_cnt_now,
+        "mood": mood,
+        "city": city,
+        "coach_style": coach_style,
+        "habits": habit_state,
+        "weekday_done": weekday_done,
+    }
+    upsert_record(st.session_state.history, record)
+    st.success(f"{selected_date_str} 기록 저장 완료!")
 
 
 # =========================
@@ -435,19 +607,18 @@ st.subheader("📝 AI 코치 리포트")
 btn = st.button("🚀 컨디션 리포트 생성", type="primary", use_container_width=True)
 
 if btn:
-    # 오늘 데이터 저장
-    checked_cnt = sum(bool(v) for v in habit_state.values())
-    achievement = round((checked_cnt / 5) * 100)
-
-    updated = False
-    for row in st.session_state.history:
-        if row.get("date") == today_str:
-            row.update({"achievement": achievement, "checked": checked_cnt, "mood": mood})
-            updated = True
-            break
-
-    if not updated:
-        st.session_state.history.append({"date": today_str, "achievement": achievement, "checked": checked_cnt, "mood": mood})
+    # 저장도 자동으로 수행
+    record = {
+        "date": selected_date_str,
+        "achievement": achievement_now,
+        "checked": checked_cnt_now,
+        "mood": mood,
+        "city": city,
+        "coach_style": coach_style,
+        "habits": habit_state,
+        "weekday_done": weekday_done,
+    }
+    upsert_record(st.session_state.history, record)
 
     # API 호출
     weather = get_weather(city, weather_api_key) if weather_api_key else None
@@ -456,12 +627,10 @@ if btn:
     st.session_state.last_weather = weather
     st.session_state.last_dog = dog
 
-    # 디버그
     if debug_mode:
         st.write("🌦 Weather Raw:", weather)
         st.write("🐶 Dog Raw:", dog)
 
-    # OpenAI 리포트 생성
     report = generate_report(
         habits=habit_state,
         mood=mood,
@@ -469,6 +638,9 @@ if btn:
         weather=weather,
         dog=dog,
         openai_api_key=openai_api_key,
+        selected_date=selected_date_str,
+        weekday_tasks=weekday_tasks,
+        weekday_done=weekday_done,
     )
     st.session_state.last_report = report
 
@@ -510,16 +682,49 @@ if st.session_state.last_report:
     # 공유용 텍스트
     share_text = (
         f"📊 AI 습관 트래커 공유\n"
-        f"- 날짜: {dt.date.today().isoformat()}\n"
+        f"- 날짜: {selected_date_str}\n"
         f"- 달성률: {achievement_now}% ({checked_cnt_now}/5)\n"
         f"- 기분: {mood}/10\n"
         f"- 도시: {city}\n"
-        f"- 코치 스타일: {coach_style}\n\n"
+        f"- 코치 스타일: {coach_style}\n"
+        f"- 요일 퀘스트: {weekday_done_cnt}/{weekday_total}\n\n"
         f"{report}\n"
     )
 
     st.markdown("#### 🔗 공유용 텍스트")
     st.code(share_text, language="text")
+
+
+# =========================
+# Extra Feature 3: Export / Import
+# =========================
+st.subheader("📦 추가 기능: 기록 내보내기 / 불러오기")
+
+export_col, import_col = st.columns(2, gap="large")
+
+with export_col:
+    if st.button("⬇️ JSON 내보내기", use_container_width=True):
+        st.download_button(
+            label="📥 다운로드",
+            data=pd.DataFrame(st.session_state.history).to_json(orient="records", force_ascii=False, indent=2),
+            file_name="habit_history.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+
+with import_col:
+    uploaded = st.file_uploader("⬆️ JSON 업로드(복원)", type=["json"])
+    if uploaded is not None:
+        try:
+            imported = uploaded.read().decode("utf-8")
+            parsed = pd.read_json(imported)
+            if "date" in parsed.columns:
+                st.session_state.history = parsed.to_dict(orient="records")
+                st.success("업로드 완료! 기록이 복원되었습니다.")
+            else:
+                st.error("올바른 JSON 형식이 아닙니다. (date 컬럼 필요)")
+        except Exception as e:
+            st.error(f"업로드 실패: {e}")
 
 
 # =========================
@@ -539,6 +744,18 @@ with st.expander("ℹ️ API 안내 / 문제 해결"):
 - **Dog CEO API**
   - 무료 공개 API로 랜덤 강아지 이미지를 가져옵니다.
   - 네트워크 환경(학교/회사)에서 외부 API가 막혀있으면 실패할 수 있습니다.
+
+- **달력 기능**
+  - 상단 날짜 선택에서 과거 날짜를 선택하면 그 날짜 기록을 새로 작성/수정할 수 있습니다.
+
+- **요일별 체크리스트**
+  - 사이드바에서 요일별 해야 할 일을 저장하면,
+    날짜를 선택할 때 해당 요일 체크리스트가 자동으로 로드됩니다.
+
+- **추가 기능**
+  - 🔥 연속 기록 스트릭
+  - 📌 주간 평균 요약
+  - 📦 JSON 내보내기/불러오기
 
 - **디버그 모드**
   - 사이드바에서 켜면 날씨/강아지 API 결과가 화면에 그대로 출력됩니다.
